@@ -1,97 +1,91 @@
-
-import subprocess
+# api.py
 import random
+import subprocess
+from pathlib import Path
+
 from fastapi import FastAPI, Query, HTTPException
 
-app = FastAPI(
-    title="YouTube Audio API",
-    description="Works with or without proxy + cookies",
-    version="1.0"
-)
+# ================= CONFIG =================
 
-COOKIES_FILE = "cookies.txt"
-PROXY_FILE = "proxies.txt"
+COOKIE_FILE = Path("cookies.txt")
+PROXY_FILE = Path("proxy.txt")
 
+# ==========================================
 
-# -----------------------------
-# Load proxies from file
-# -----------------------------
-def load_proxies():
-    try:
-        with open(PROXY_FILE, "r") as f:
-            return [p.strip() for p in f if p.strip()]
-    except:
-        return []
+app = FastAPI(title="YouTube Audio API", version="1.0")
 
 
-# -----------------------------
-# Run yt-dlp
-# -----------------------------
-def run_yt_dlp(url: str, proxy: str | None = None):
+# ---------- Proxy Handler ----------
+def get_proxy():
+    if not PROXY_FILE.exists():
+        return None
+
+    proxies = [
+        p.strip()
+        for p in PROXY_FILE.read_text().splitlines()
+        if p.strip()
+    ]
+    return random.choice(proxies) if proxies else None
+
+
+# ---------- Core yt-dlp Logic ----------
+def extract_audio_url(youtube_url: str) -> str:
+    if not COOKIE_FILE.exists():
+        raise RuntimeError("cookies.txt not found")
+
+    proxy = get_proxy()
+
     cmd = [
         "yt-dlp",
-        "--cookies", COOKIES_FILE,
+        "--cookies", str(COOKIE_FILE),
         "--remote-components", "ejs:github",
+        "--extractor-args", "youtube:player_client=web",
         "-f", "bestaudio",
         "-g",
-        url
+        youtube_url,
     ]
 
     if proxy:
         cmd.insert(1, "--proxy")
         cmd.insert(2, proxy)
-        cmd.insert(1, "--force-ipv4")
 
     try:
         output = subprocess.check_output(
             cmd,
             stderr=subprocess.STDOUT,
-            timeout=25
-        ).decode().strip()
-        return output
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(e.output.decode())
-    except Exception as e:
-        raise RuntimeError(str(e))
-
-
-# -----------------------------
-# API Endpoint
-# -----------------------------
-@app.get("/audio")
-def get_audio(url: str = Query(..., description="YouTube video URL")):
-
-    # 1️⃣ TRY WITHOUT PROXY
-    try:
-        audio_url = run_yt_dlp(url)
-        return {
-            "success": True,
-            "mode": "no_proxy",
-            "audio_url": audio_url
-        }
-    except Exception as no_proxy_err:
-        pass
-
-    # 2️⃣ TRY WITH PROXY
-    proxies = load_proxies()
-    if not proxies:
-        raise HTTPException(
-            status_code=500,
-            detail="Blocked without proxy & no proxy available"
+            text=True,
+            timeout=60,
         )
+        return output.strip()
 
-    proxy = random.choice(proxies)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(e.output)
 
+
+# ================= API ROUTES =================
+
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "proxy_enabled": PROXY_FILE.exists(),
+        "cookies_loaded": COOKIE_FILE.exists(),
+    }
+
+
+@app.get("/audio")
+def get_audio(
+    url: str = Query(..., description="YouTube video URL"),
+):
     try:
-        audio_url = run_yt_dlp(url, proxy)
+        audio_url = extract_audio_url(url)
         return {
-            "success": True,
-            "mode": "proxy",
-            "proxy_used": proxy,
-            "audio_url": audio_url
+            "status": "success",
+            "audio_url": audio_url,
         }
-    except Exception as proxy_err:
+
+    except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=str(proxy_err)
+            detail=str(e),
         )
