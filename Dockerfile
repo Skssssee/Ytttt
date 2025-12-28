@@ -28,4 +28,4 @@ COPY . .
 EXPOSE 8000
 
 # Run FastAPI app
-CMD ["sh", "-c", "uvicorn yt_api:app --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port $PORT"]
